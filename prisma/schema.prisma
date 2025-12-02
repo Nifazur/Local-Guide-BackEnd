@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  TOURIST
+  GUIDE
+  ADMIN
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  password        String
+  role            UserRole  @default(TOURIST)
+  name            String
+  profilePic      String?
+  bio             String?
+  languages       String[]  @default([])
+  phone           String?
+  isVerified      Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Guide specific fields
+  expertise       String[]  @default([])
+  dailyRate       Float?
+  city            String?
+  country         String?
+  
+  // Tourist specific fields
+  travelPreferences String[]  @default([])
+
+  // Relations
+  listings          Listing[]
+  bookingsAsTourist Booking[] @relation("TouristBookings")
+  bookingsAsGuide   Booking[] @relation("GuideBookings")
+  reviewsGiven      Review[]  @relation("ReviewsGiven")
+  reviewsReceived   Review[]  @relation("ReviewsReceived")
+  payments          Payment[]
+
+  @@index([email])
+  @@index([role])
+  @@index([city])
+}
+
+model Listing {
+  id            String    @id @default(uuid())
+  title         String
+  description   String
+  itinerary     String?
+  tourFee       Float
+  duration      Int       // Duration in hours
+  meetingPoint  String
+  maxGroupSize  Int
+  images        String[]  @default([])
+  city          String
+  country       String
+  category      String[]  @default([])
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  guideId       String
+  guide         User      @relation(fields: [guideId], references: [id], onDelete: Cascade)
+  bookings      Booking[]
+  reviews       Review[]
+
+  @@index([guideId])
+  @@index([city])
+  @@index([category])
+  @@index([tourFee])
+  @@index([isActive])
+}
+
+model Booking {
+  id              String        @id @default(uuid())
+  bookingDate     DateTime
+  startTime       String
+  endTime         String?
+  numberOfPeople  Int           @default(1)
+  totalAmount     Float
+  status          BookingStatus @default(PENDING)
+  specialRequests String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  touristId     String
+  tourist       User          @relation("TouristBookings", fields: [touristId], references: [id], onDelete: Cascade)
+  guideId       String
+  guide         User          @relation("GuideBookings", fields: [guideId], references: [id], onDelete: Cascade)
+  listingId     String
+  listing       Listing       @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  payment       Payment?
+  review        Review?
+
+  @@index([touristId])
+  @@index([guideId])
+  @@index([listingId])
+  @@index([status])
+  @@index([bookingDate])
+}
+
+model Review {
+  id            String    @id @default(uuid())
+  rating        Int       // 1-5
+  comment       String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  touristId     String
+  tourist       User      @relation("ReviewsGiven", fields: [touristId], references: [id], onDelete: Cascade)
+  guideId       String
+  guide         User      @relation("ReviewsReceived", fields: [guideId], references: [id], onDelete: Cascade)
+  listingId     String
+  listing       Listing   @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  bookingId     String    @unique
+  booking       Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([touristId])
+  @@index([guideId])
+  @@index([listingId])
+  @@index([rating])
+}
+
+model Payment {
+  id                String        @id @default(uuid())
+  amount            Float
+  currency          String        @default("USD")
+  status            PaymentStatus @default(PENDING)
+  stripePaymentId   String?
+  stripeSessionId   String?
+  paymentMethod     String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  userId            String
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookingId         String        @unique
+  booking           Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([bookingId])
+  @@index([stripePaymentId])
+  @@index([status])
+}
