@@ -38,6 +38,7 @@ router.post(
 router.get('/', validate(paymentValidation.getPaymentsSchema), paymentController.getPayments);
 router.get('/stats', paymentController.getPaymentStats);
 router.get('/:id', validate(paymentValidation.getPaymentSchema), paymentController.getPaymentById);
+router.get('/status/:bookingId', paymentController.getPaymentByBookingId);
 
 // Admin only
 router.post(

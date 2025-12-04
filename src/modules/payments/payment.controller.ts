@@ -77,3 +77,8 @@ export const getPaymentStats = asyncHandler(async (req: Request, res: Response):
 
   res.status(200).json(ApiResponse.success(stats, 'Payment stats retrieved successfully'));
 });
+
+export const getPaymentByBookingId = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const payment = await paymentService.getPaymentByBookingId(req.params.bookingId);
+  res.status(200).json(ApiResponse.success(payment, 'Payment status retrieved'));
+});

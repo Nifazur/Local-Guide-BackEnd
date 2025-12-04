@@ -160,8 +160,8 @@ export const createCheckoutSession = async (
       bookingId: booking.id,
       userId: userId,
     },
-    success_url: `${config.frontendUrl}/bookings/${booking.id}?payment=success`,
-    cancel_url: `${config.frontendUrl}/bookings/${booking.id}?payment=cancelled`,
+    success_url: `${config.frontendUrl}/dashboard/bookings/${booking.id}?payment=success`,
+    cancel_url: `${config.frontendUrl}/dashboard/bookings/${booking.id}?payment=cancelled`,
   });
 
   // Create or update payment record
@@ -291,16 +291,27 @@ const handlePaymentFailure = async (paymentIntent: Stripe.PaymentIntent): Promis
 const handleCheckoutComplete = async (session: Stripe.Checkout.Session): Promise<void> => {
   const bookingId = session.metadata?.bookingId;
 
-  if (!bookingId) return;
+  if (!bookingId) {
+    console.error('No bookingId found in session metadata');
+    return;
+  }
 
-  await prisma.payment.update({
-    where: { bookingId: bookingId },
-    data: {
-      status: PaymentStatus.PAID,
-      stripeSessionId: session.id,
-      paymentMethod: session.payment_method_types?.[0] || 'card',
-    },
-  });
+  try {
+    // Update payment status
+    await prisma.payment.update({
+      where: { bookingId: bookingId },
+      data: {
+        status: PaymentStatus.PAID,
+        stripeSessionId: session.id,
+        paymentMethod: session.payment_method_types?.[0] || 'card',
+        stripePaymentId: session.payment_intent as string,
+      },
+    });
+
+    console.log(`Payment updated successfully for booking ${bookingId}`);
+  } catch (error) {
+    console.error('Error updating payment:', error);
+  }
 };
 
 export const getPayments = async (
@@ -516,4 +527,18 @@ export const getPaymentStats = async (
     failed,
     totalRevenue: revenue._sum.amount || 0,
   };
+};
+export const getPaymentByBookingId = async (bookingId: string): Promise<IPayment | null> => {
+  const payment = await prisma.payment.findUnique({
+    where: { bookingId },
+    include: {
+      booking: {
+        include: {
+          listing: true,
+        },
+      },
+    },
+  });
+
+  return payment as unknown as IPayment;
 };
