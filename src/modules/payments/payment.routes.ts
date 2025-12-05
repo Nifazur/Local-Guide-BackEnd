@@ -7,8 +7,8 @@ import { authorize } from '../../middleware/authorize';
 
 const router = Router();
 
-// Stripe webhook (no auth required, raw body)
-router.post('/webhook', raw({ type: 'application/json' }), paymentController.handleWebhook);
+// // Stripe webhook (no auth required, raw body)
+// router.post('/webhook', raw({ type: 'application/json' }), paymentController.handleWebhook);
 
 // Protected routes
 router.use(authenticate);

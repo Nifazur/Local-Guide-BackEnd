@@ -9,7 +9,11 @@ const router = Router();
 
 // Public routes
 router.get('/', validate(reviewValidation.getReviewsSchema), reviewController.getReviews);
-router.get('/guide/:guideId', reviewController.getGuideReviews);
+router.get(
+  '/guide/:guideId',
+  validate(reviewValidation.getGuideReviewsSchema),
+  reviewController.getGuideReviews
+);
 router.get('/:id', validate(reviewValidation.getReviewSchema), reviewController.getReviewById);
 
 // Protected routes

@@ -207,6 +207,7 @@ export const confirmPayment = async (
 
   // Verify payment with Stripe
   const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+  console.log(paymentIntent)
 
   if (paymentIntent.status !== 'succeeded') {
     throw ApiError.badRequest('Payment has not been completed');

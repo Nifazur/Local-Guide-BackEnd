@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
-
+import * as paymentController from './modules/payments/payment.controller'
 import config from './config';
 import routes from './routes';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
@@ -13,6 +13,12 @@ const app: Application = express();
 
 // Security Middleware
 app.use(helmet());
+
+app.post(
+    "/api/payments/webhook",
+    express.raw({ type: "application/json" }),
+    paymentController.handleWebhook
+);
 
 // CORS Configuration
 app.use(

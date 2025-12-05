@@ -30,11 +30,13 @@ export const confirmPayment = asyncHandler(async (req: Request, res: Response): 
   res.status(200).json(ApiResponse.success(payment, 'Payment confirmed successfully'));
 });
 
-export const handleWebhook = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const signature = req.headers['stripe-signature'] as string;
-  const result = await paymentService.handleWebhook(req.body, signature);
+export const handleWebhook = asyncHandler(async (req, res) => {
+  const signature = req.headers["stripe-signature"] as string;
+  const rawBody = req.body; // raw buffer
 
-  res.status(200).json(result);
+  const result = await paymentService.handleWebhook(rawBody, signature);
+
+  res.status(200).send({ received: true });
 });
 
 export const getPayments = asyncHandler(async (req: Request, res: Response): Promise<void> => {
