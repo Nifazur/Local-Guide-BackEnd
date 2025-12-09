@@ -1,12 +1,15 @@
-import { PrismaClient, UserRole, BookingStatus, PaymentStatus, Prisma } from '@prisma/client';
+// src/services/payment/payment.service.ts
+
+import { UserRole, BookingStatus, PaymentStatus, Prisma } from '@prisma/client';
 import Stripe from 'stripe';
+import prisma from '../../config/prisma';
 import stripe from '../../config/stripe';
 import config from '../../config';
 import ApiError from '../../utils/ApiError';
 import { getPagination, getPaginationMeta } from '../../utils/helpers';
 import { IPaymentFilters, IPayment, IPaginationMeta } from '../../types';
 
-const prisma = new PrismaClient();
+// ============== Interfaces ==============
 
 interface PaymentsResult {
   payments: IPayment[];
@@ -34,15 +37,17 @@ interface PaymentStats {
   totalRevenue: number;
 }
 
+// ============== Payment Intent Flow ==============
+
 export const createPaymentIntent = async (
   userId: string,
   bookingId: string
 ): Promise<PaymentIntentResult> => {
-  // Get booking
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
       listing: true,
+      tourist: true,
       payment: true,
     },
   });
@@ -51,24 +56,21 @@ export const createPaymentIntent = async (
     throw ApiError.notFound('Booking not found');
   }
 
-  // Check if user is the tourist
   if (booking.touristId !== userId) {
     throw ApiError.forbidden('You can only pay for your own bookings');
   }
 
-  // Check booking status
   if (booking.status !== BookingStatus.CONFIRMED) {
     throw ApiError.badRequest('Booking must be confirmed before payment');
   }
 
-  // Check if already paid
   if (booking.payment && booking.payment.status === PaymentStatus.PAID) {
     throw ApiError.conflict('This booking has already been paid');
   }
 
   // Create Stripe Payment Intent
   const paymentIntent = await stripe.paymentIntents.create({
-    amount: Math.round(booking.totalAmount * 100), // Convert to cents
+    amount: Math.round(booking.totalAmount * 100),
     currency: 'usd',
     metadata: {
       bookingId: booking.id,
@@ -78,6 +80,7 @@ export const createPaymentIntent = async (
     automatic_payment_methods: {
       enabled: true,
     },
+    receipt_email: booking.tourist.email,
   });
 
   // Create or update payment record
@@ -105,16 +108,56 @@ export const createPaymentIntent = async (
   };
 };
 
+export const confirmPayment = async (
+  userId: string,
+  bookingId: string,
+  paymentIntentId: string
+): Promise<IPayment> => {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: { payment: true },
+  });
+
+  if (!booking) {
+    throw ApiError.notFound('Booking not found');
+  }
+
+  if (booking.touristId !== userId) {
+    throw ApiError.forbidden('Unauthorized');
+  }
+
+  // Verify payment with Stripe
+  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+  if (paymentIntent.status !== 'succeeded') {
+    throw ApiError.badRequest('Payment has not been completed');
+  }
+
+  // Update payment status
+  const payment = await prisma.payment.update({
+    where: { bookingId: bookingId },
+    data: {
+      status: PaymentStatus.PAID,
+      stripePaymentId: paymentIntent.id,
+      paymentMethod: paymentIntent.payment_method_types[0],
+    },
+  });
+
+  return payment as unknown as IPayment;
+};
+
+// ============== Checkout Session Flow ==============
+
 export const createCheckoutSession = async (
   userId: string,
   bookingId: string
 ): Promise<CheckoutSessionResult> => {
-  // Get booking
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
       listing: true,
       guide: true,
+      tourist: true,
       payment: true,
     },
   });
@@ -123,42 +166,48 @@ export const createCheckoutSession = async (
     throw ApiError.notFound('Booking not found');
   }
 
-  // Check if user is the tourist
   if (booking.touristId !== userId) {
     throw ApiError.forbidden('You can only pay for your own bookings');
   }
 
-  // Check booking status
   if (booking.status !== BookingStatus.CONFIRMED) {
     throw ApiError.badRequest('Booking must be confirmed before payment');
   }
 
-  // Check if already paid
   if (booking.payment && booking.payment.status === PaymentStatus.PAID) {
     throw ApiError.conflict('This booking has already been paid');
   }
 
-  // Create Stripe Checkout Session
+  // ✅ Fixed: metadata added to both session and payment_intent_data
+  const metadata = {
+    bookingId: booking.id,
+    userId: userId,
+    listingId: booking.listingId,
+  };
+
   const session = await stripe.checkout.sessions.create({
     payment_method_types: ['card'],
     mode: 'payment',
+    customer_email: booking.tourist.email,
+    metadata: metadata, // ✅ Session level metadata
     line_items: [
       {
         price_data: {
           currency: 'usd',
           product_data: {
             name: booking.listing.title,
-            description: `Tour with ${booking.guide.name} on ${new Date(booking.bookingDate).toLocaleDateString()}`,
-            images: booking.listing.images.length > 0 ? [booking.listing.images[0]] : [],
+            description: `Tour with ${booking.guide.name} on ${new Date(
+              booking.bookingDate
+            ).toLocaleDateString()}`,
+            images: booking.listing.images.length > 0 ? [booking.listing.images[0]] : undefined,
           },
           unit_amount: Math.round(booking.totalAmount * 100),
         },
         quantity: 1,
       },
     ],
-    metadata: {
-      bookingId: booking.id,
-      userId: userId,
+    payment_intent_data: {
+      metadata: metadata, // ✅ Payment intent level metadata
     },
     success_url: `${config.frontendUrl}/dashboard/bookings/${booking.id}?payment=success`,
     cancel_url: `${config.frontendUrl}/dashboard/bookings/${booking.id}?payment=cancelled`,
@@ -187,43 +236,7 @@ export const createCheckoutSession = async (
   };
 };
 
-export const confirmPayment = async (
-  userId: string,
-  bookingId: string,
-  paymentIntentId: string
-): Promise<IPayment> => {
-  const booking = await prisma.booking.findUnique({
-    where: { id: bookingId },
-    include: { payment: true },
-  });
-
-  if (!booking) {
-    throw ApiError.notFound('Booking not found');
-  }
-
-  if (booking.touristId !== userId) {
-    throw ApiError.forbidden('Unauthorized');
-  }
-
-  // Verify payment with Stripe
-  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-  console.log(paymentIntent)
-
-  if (paymentIntent.status !== 'succeeded') {
-    throw ApiError.badRequest('Payment has not been completed');
-  }
-
-  // Update payment status
-  const payment = await prisma.payment.update({
-    where: { bookingId: bookingId },
-    data: {
-      status: PaymentStatus.PAID,
-      paymentMethod: paymentIntent.payment_method_types[0],
-    },
-  });
-
-  return payment as unknown as IPayment;
-};
+// ============== Webhook Handler ==============
 
 export const handleWebhook = async (
   payload: Buffer,
@@ -254,8 +267,6 @@ export const handleWebhook = async (
       await handleCheckoutComplete(session);
       break;
     }
-    default:
-      console.log(`Unhandled event type: ${event.type}`);
   }
 
   return { received: true };
@@ -264,6 +275,15 @@ export const handleWebhook = async (
 const handlePaymentSuccess = async (paymentIntent: Stripe.PaymentIntent): Promise<void> => {
   const bookingId = paymentIntent.metadata.bookingId;
   if (!bookingId) return;
+
+  // Check if already paid
+  const existingPayment = await prisma.payment.findUnique({
+    where: { bookingId: bookingId },
+  });
+
+  if (existingPayment?.status === PaymentStatus.PAID) {
+    return; // Already processed
+  }
 
   await prisma.payment.update({
     where: { bookingId: bookingId },
@@ -277,7 +297,6 @@ const handlePaymentSuccess = async (paymentIntent: Stripe.PaymentIntent): Promis
 
 const handlePaymentFailure = async (paymentIntent: Stripe.PaymentIntent): Promise<void> => {
   const bookingId = paymentIntent.metadata.bookingId;
-
   if (!bookingId) return;
 
   await prisma.payment.update({
@@ -290,29 +309,29 @@ const handlePaymentFailure = async (paymentIntent: Stripe.PaymentIntent): Promis
 
 const handleCheckoutComplete = async (session: Stripe.Checkout.Session): Promise<void> => {
   const bookingId = session.metadata?.bookingId;
+  if (!bookingId) return;
 
-  if (!bookingId) {
-    console.error('No bookingId found in session metadata');
-    return;
+  // Check if already paid
+  const existingPayment = await prisma.payment.findUnique({
+    where: { bookingId: bookingId },
+  });
+
+  if (existingPayment?.status === PaymentStatus.PAID) {
+    return; // Already processed
   }
 
-  try {
-    // Update payment status
-    await prisma.payment.update({
-      where: { bookingId: bookingId },
-      data: {
-        status: PaymentStatus.PAID,
-        stripeSessionId: session.id,
-        paymentMethod: session.payment_method_types?.[0] || 'card',
-        stripePaymentId: session.payment_intent as string,
-      },
-    });
-
-    console.log(`Payment updated successfully for booking ${bookingId}`);
-  } catch (error) {
-    console.error('Error updating payment:', error);
-  }
+  await prisma.payment.update({
+    where: { bookingId: bookingId },
+    data: {
+      status: PaymentStatus.PAID,
+      stripeSessionId: session.id,
+      paymentMethod: session.payment_method_types?.[0] || 'card',
+      stripePaymentId: session.payment_intent as string,
+    },
+  });
 };
+
+// ============== Query Functions ==============
 
 export const getPayments = async (
   userId: string,
@@ -324,7 +343,6 @@ export const getPayments = async (
 
   const where: Prisma.PaymentWhereInput = {};
 
-  // Filter by role
   if (userRole === UserRole.TOURIST) {
     where.userId = userId;
   } else if (userRole === UserRole.GUIDE) {
@@ -332,7 +350,6 @@ export const getPayments = async (
       guideId: userId,
     };
   }
-  // Admin sees all
 
   if (status) {
     where.status = status;
@@ -427,7 +444,6 @@ export const getPaymentById = async (
     throw ApiError.notFound('Payment not found');
   }
 
-  // Authorization check
   if (
     userRole !== UserRole.ADMIN &&
     payment.userId !== userId &&
@@ -438,6 +454,23 @@ export const getPaymentById = async (
 
   return payment as unknown as IPayment;
 };
+
+export const getPaymentByBookingId = async (bookingId: string): Promise<IPayment | null> => {
+  const payment = await prisma.payment.findUnique({
+    where: { bookingId },
+    include: {
+      booking: {
+        include: {
+          listing: true,
+        },
+      },
+    },
+  });
+
+  return payment as unknown as IPayment;
+};
+
+// ============== Refund ==============
 
 export const refundPayment = async (
   paymentId: string,
@@ -456,7 +489,6 @@ export const refundPayment = async (
     throw ApiError.notFound('Payment not found');
   }
 
-  // Only admin can refund
   if (userRole !== UserRole.ADMIN) {
     throw ApiError.forbidden('Only admin can process refunds');
   }
@@ -478,25 +510,27 @@ export const refundPayment = async (
     }
   }
 
-  // Update payment status
-  const updatedPayment = await prisma.payment.update({
-    where: { id: paymentId },
-    data: { status: PaymentStatus.REFUNDED },
-  });
+  // ✅ Use transaction for atomicity
+  const updatedPayment = await prisma.$transaction(async (tx) => {
+    const updated = await tx.payment.update({
+      where: { id: paymentId },
+      data: { status: PaymentStatus.REFUNDED },
+    });
 
-  // Cancel the booking
-  await prisma.booking.update({
-    where: { id: payment.bookingId },
-    data: { status: BookingStatus.CANCELLED },
+    await tx.booking.update({
+      where: { id: payment.bookingId },
+      data: { status: BookingStatus.CANCELLED },
+    });
+
+    return updated;
   });
 
   return updatedPayment as unknown as IPayment;
 };
 
-export const getPaymentStats = async (
-  userId: string,
-  userRole: UserRole
-): Promise<PaymentStats> => {
+// ============== Stats ==============
+
+export const getPaymentStats = async (userId: string, userRole: UserRole): Promise<PaymentStats> => {
   const where: Prisma.PaymentWhereInput = {};
 
   if (userRole === UserRole.GUIDE) {
@@ -505,19 +539,17 @@ export const getPaymentStats = async (
     where.userId = userId;
   }
 
-  const [total, paid, pending, refunded, failed] = await Promise.all([
+  const [total, paid, pending, refunded, failed, revenue] = await Promise.all([
     prisma.payment.count({ where }),
     prisma.payment.count({ where: { ...where, status: PaymentStatus.PAID } }),
     prisma.payment.count({ where: { ...where, status: PaymentStatus.PENDING } }),
     prisma.payment.count({ where: { ...where, status: PaymentStatus.REFUNDED } }),
     prisma.payment.count({ where: { ...where, status: PaymentStatus.FAILED } }),
+    prisma.payment.aggregate({
+      where: { ...where, status: PaymentStatus.PAID },
+      _sum: { amount: true },
+    }),
   ]);
-
-  // Calculate total revenue
-  const revenue = await prisma.payment.aggregate({
-    where: { ...where, status: PaymentStatus.PAID },
-    _sum: { amount: true },
-  });
 
   return {
     total,
@@ -527,18 +559,4 @@ export const getPaymentStats = async (
     failed,
     totalRevenue: revenue._sum.amount || 0,
   };
-};
-export const getPaymentByBookingId = async (bookingId: string): Promise<IPayment | null> => {
-  const payment = await prisma.payment.findUnique({
-    where: { bookingId },
-    include: {
-      booking: {
-        include: {
-          listing: true,
-        },
-      },
-    },
-  });
-
-  return payment as unknown as IPayment;
 };
