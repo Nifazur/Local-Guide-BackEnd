@@ -263,7 +263,6 @@ export const handleWebhook = async (
 
 const handlePaymentSuccess = async (paymentIntent: Stripe.PaymentIntent): Promise<void> => {
   const bookingId = paymentIntent.metadata.bookingId;
-
   if (!bookingId) return;
 
   await prisma.payment.update({

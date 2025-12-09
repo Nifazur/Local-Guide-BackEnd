@@ -11,14 +11,15 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 
 const app: Application = express();
 
-// Security Middleware
-app.use(helmet());
 
 app.post(
     "/api/payments/webhook",
     express.raw({ type: "application/json" }),
     paymentController.handleWebhook
 );
+
+// Security Middleware
+app.use(helmet());
 
 // CORS Configuration
 app.use(
