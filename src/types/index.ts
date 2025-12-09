@@ -152,6 +152,8 @@ export interface IBookingFilters {
   status?: BookingStatus;
   startDate?: Date;
   endDate?: Date;
+  sortBy?: 'createdAt' | 'bookingDate' | 'totalAmount'; 
+  sortOrder?: 'asc' | 'desc';
 }
 
 export interface IReviewFilters {

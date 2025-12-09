@@ -112,7 +112,16 @@ export const getBookings = async (
   userRole: UserRole,
   filters: IBookingFilters
 ): Promise<BookingsResult> => {
-  const { page = 1, limit = 10, status, startDate, endDate } = filters;
+  const { 
+    page = 1, 
+    limit = 10, 
+    status, 
+    startDate, 
+    endDate,
+    sortBy = 'createdAt',
+    sortOrder = 'desc'     
+  } = filters;
+  
   const { skip } = getPagination(page, limit);
 
   const where: Prisma.BookingWhereInput = {};
@@ -123,7 +132,6 @@ export const getBookings = async (
   } else if (userRole === UserRole.GUIDE) {
     where.guideId = userId;
   }
-  // Admin can see all bookings
 
   if (status) {
     where.status = status;
@@ -135,12 +143,22 @@ export const getBookings = async (
     if (endDate) where.bookingDate.lte = new Date(endDate);
   }
 
+  // ✅ Dynamic orderBy
+  const orderBy: Prisma.BookingOrderByWithRelationInput = {};
+  if (sortBy === 'createdAt') {
+    orderBy.createdAt = sortOrder;
+  } else if (sortBy === 'bookingDate') {
+    orderBy.bookingDate = sortOrder;
+  } else if (sortBy === 'totalAmount') {
+    orderBy.totalAmount = sortOrder;
+  }
+
   const [bookings, total] = await Promise.all([
     prisma.booking.findMany({
       where,
       skip,
       take: limit,
-      orderBy: { bookingDate: 'desc' },
+      orderBy, // ✅ Dynamic sorting
       include: {
         listing: {
           select: {
